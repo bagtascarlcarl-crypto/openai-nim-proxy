@@ -30,16 +30,31 @@ const ENABLE_THINKING_MODE = false; // Set to true to enable chat_template_kwarg
 
 // Model mapping (adjust based on available NIM models)
 const MODEL_MAPPING = {
-     'gpt-3.5-turbo': 'nvidia/llama-3.1-nemotron-ultra-253b-v1',
-     'gpt-3.5-turbo': 'nvidia/llama-3.1-nemotron-ultra-253b-v1',
-     'gpt-4': 'qwen/qwen3-235b-a22b',
-     'gpt-4-turbo': 'moonshotai/kimi-k2-instruct-0905',
-     'gpt-4o': 'qwen/qwen3-235b-a22b',
-     'claude-3-opus': 'qwen/qwen3-235b-a22b',
-     'claude-3-sonnet': 'openai/gpt-oss-20b',
-     'gemini-pro': 'qwen/qwen3-next-80b-a3b-thinking'
- };
+  // 🟢 Fast NPC / casual RP
+  'gpt-3.5-turbo': 'nvidia/llama-3.1-nemotron-nano-8b-v1',
 
+  // 🟡 Main RP brain (balanced storytelling)
+  'gpt-4': 'nvidia/llama-3.1-nemotron-super-49b-v1',
+
+  // 🟡 Same tier (keep consistent for RP stability)
+  'gpt-4-turbo': 'nvidia/llama-3.1-nemotron-super-49b-v1',
+
+  // 🔴 Cinematic / emotional RP
+  'gpt-4o': 'nvidia/llama-3.1-nemotron-ultra-253b-v1',
+
+  // 🔴 High-quality storytelling / long scenes
+  'claude-3-opus': 'nvidia/llama-3.1-nemotron-ultra-253b-v1',
+
+  // 🟡 Clean dialogue RP
+  'claude-3-sonnet': 'nvidia/llama-3.1-nemotron-super-49b-v1',
+
+  // 🔥 Experimental / lore-heavy RP
+  'gemini-pro': 'nvidia/llama-3.1-nemotron-ultra-253b-v1',
+
+  // 🧠 Deep reasoning RP (IMPORTANT ADDITION)
+  // This is NOT a Nemotron model — it's DeepSeek R1 served via NVIDIA NIM-style endpoint
+  'deepseek-r1': 'deepseek-ai/deepseek-r1'
+};
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({ 
