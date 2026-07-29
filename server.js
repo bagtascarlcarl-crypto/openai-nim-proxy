@@ -1,4 +1,4 @@
-// server.js - OpenAI to NVIDIA NIM API Proxy
+// server.js - OpenAI-compatible Proxy -> OpenRouter
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
@@ -6,35 +6,115 @@ const axios = require('axios');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
 app.use(cors());
 app.use(express.json());
-// Root route
+
 app.get('/', (req, res) => {
-  res.send('✅ OpenAI NIM Proxy is running!');
-  res.send('\nAvailable endpoints:');
-  res.send('\n- /health');
-  res.send('\n- /v1/models');
-  res.send('\n- /v1/chat/completions');
+  res.send('✅ OpenAI -> OpenRouter Proxy is running!\nEndpoints: /health, /v1/models, /v1/chat/completions');
 });
 
-// NVIDIA NIM API configuration
-const NIM_API_BASE = process.env.NIM_API_BASE || 'https://integrate.api.nvidia.com/v1';
-const NIM_API_KEY = process.env.NIM_API_KEY;
+// ---- OpenRouter config ----
+const OPENROUTER_API_BASE = 'https://openrouter.ai/api/v1';
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY; // set this in your environment
+const SITE_URL = process.env.SITE_URL || 'http://localhost:3000';   // optional, for OpenRouter rankings
+const SITE_NAME = process.env.SITE_NAME || 'My Proxy App';          // optional, for OpenRouter rankings
 
-// 🔥 REASONING DISPLAY TOGGLE - Shows/hides reasoning in output
-const SHOW_REASONING = false; // Set to true to show reasoning with <think> tags
-
-// 🔥 THINKING MODE TOGGLE - Enables thinking for specific models that support it
-const ENABLE_THINKING_MODE = false; // Set to true to enable chat_template_kwargs thinking parameter
-
-// Model mapping (adjust based on available NIM models)
+// Map "friendly" names your app sends -> real OpenRouter model slugs.
+// Every value below ends in ":free" - $0 per token, but rate-limited
+// (roughly 20 requests/minute, 50/day per OpenRouter account until you've
+// bought $10+ in credits, which raises the daily cap to 1,000).
+// This list was verified live against https://openrouter.ai/collections/free-models
+// on 2026-07-29 - free models rotate over time, so re-check that page if one
+// of these ever starts returning a 404/model-not-found error.
 const MODEL_MAPPING = {
-  // 🟢 Fast NPC / casual RP
-  'gpt-3.5-turbo': 'nvidia/llama-3.1-nemotron-nano-8b-v1',
+  'gpt-3.5-turbo': 'nvidia/nemotron-nano-9b-v2:free',          // small & fast
+  'gpt-4': 'google/gemma-4-31b-it:free',                       // solid general-purpose
+  'gpt-4-turbo': 'tencent/hy3:free',                           // larger, 262K context
+  'gpt-4o': 'nvidia/nemotron-3-super-120b-a12b:free',          // large MoE, 1M context
+  'claude-3-opus': 'nvidia/nemotron-3-ultra-550b-a55b:free',   // largest free model available, 1M context
+  'claude-3-sonnet': 'google/gemma-4-26b-a4b-it:free',         // efficient MoE
+  'gemini-pro': 'google/gemma-4-31b-it:free',                  // kept in the Google family
+  'deepseek-r1': 'openai/gpt-oss-20b:free'                     // no free DeepSeek R1 was live at check time; this is a free reasoning-capable stand-in
+};
 
-  // 🟡 Main RP brain (balanced storytelling)
-  'gpt-4': 'nvidia/llama-3.1-nemotron-super-49b-v1',
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', service: 'OpenAI -> OpenRouter Proxy' });
+});
+
+app.get('/v1/models', (req, res) => {
+  const models = Object.keys(MODEL_MAPPING).map(model => ({
+    id: model,
+    object: 'model',
+    created: Date.now(),
+    owned_by: 'openrouter-proxy'
+  }));
+  res.json({ object: 'list', data: models });
+});
+
+app.post('/v1/chat/completions', async (req, res) => {
+  try {
+    const { model, messages, temperature, max_tokens, stream } = req.body;
+
+    // Use the mapped model if we know it, otherwise pass the requested name straight through
+    // (OpenRouter model names already look like "provider/model", so this often just works)
+    const orModel = MODEL_MAPPING[model] || model;
+
+    const orRequest = {
+      model: orModel,
+      messages: messages,
+      temperature: temperature ?? 0.7,
+      max_tokens: max_tokens ?? 1024,
+      stream: stream || false
+    };
+
+    const response = await axios.post(`${OPENROUTER_API_BASE}/chat/completions`, orRequest, {
+      headers: {
+        'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': SITE_URL,   // optional, OpenRouter uses this for their leaderboard
+        'X-Title': SITE_NAME        // optional, same purpose
+      },
+      responseType: stream ? 'stream' : 'json'
+    });
+
+    if (stream) {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      response.data.pipe(res); // OpenRouter's stream is already OpenAI-shaped, so just forward it
+      response.data.on('end', () => res.end());
+      response.data.on('error', (err) => {
+        console.error('Stream error:', err);
+        res.end();
+      });
+    } else {
+      // OpenRouter's non-streaming response already matches OpenAI's shape closely,
+      // so we can mostly pass it straight through.
+      res.json(response.data);
+    }
+
+  } catch (error) {
+    console.error('Proxy error:', error.message);
+    res.status(error.response?.status || 500).json({
+      error: {
+        message: error.message || 'Internal server error',
+        type: 'invalid_request_error',
+        code: error.response?.status || 500
+      }
+    });
+  }
+});
+
+app.all('*', (req, res) => {
+  res.status(404).json({
+    error: { message: `Endpoint ${req.path} not found`, type: 'invalid_request_error', code: 404 }
+  });
+});
+
+app.listen(PORT, () => {
+  console.log(`OpenAI -> OpenRouter Proxy running on port ${PORT}`);
+  console.log(`Health check: http://localhost:${PORT}/health`);
+});  'gpt-4': 'nvidia/llama-3.1-nemotron-super-49b-v1',
 
   // 🟡 Same tier (keep consistent for RP stability)
   'gpt-4-turbo': 'nvidia/llama-3.1-nemotron-super-49b-v1',
